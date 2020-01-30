@@ -190,7 +190,7 @@ class MachineStateCanvas extends Canvas {
 			this.value = valueString;
 			this.valueExtent = gc.stringExtent(valueString);
 			if (value instanceof IJavaValue && ((IJavaValue)value).getJavaType() instanceof IJavaReferenceType && !((IJavaValue)value).isNull()) {
-				this.value = heap.get((IJavaObject)value);
+				this.value = heap.get(gc, (IJavaObject)value);
 			}
 			this.height = PADDING + Math.max(this.nameExtent.y, this.valueExtent.y) + PADDING;
 		}
@@ -333,18 +333,37 @@ class MachineStateCanvas extends Canvas {
 		
 		long id;
 		String className;
+		String title;
+		Point titleExtent;
+		VariablesTable table = new VariablesTable();
+		Variable[] variables;
 		
 		JavaObject(int x, int y, long id) {
 			super(heap);
 			this.x = x;
 	        this.y = y;
 	        this.id = id;
-	        this.width = 200;
+	        this.width = BORDER + PADDING + table.namesWidth + table.valuesWidth + PADDING + BORDER;
 	        this.height = 50;
 		}
 		
-		void setState(IJavaObject javaObject) throws DebugException {
+		void setState(GC gc, IJavaObject javaObject) throws DebugException {
 			className = MachineStateCanvas.chopPackageName(javaObject.getReferenceTypeName());
+			title = this.className + "(id=" + id + ")";
+			titleExtent = gc.stringExtent(title);
+			int y = BORDER + PADDING;
+			y += titleExtent.y;
+			y += PADDING;
+			IVariable[] variables = javaObject.getVariables();
+			this.variables = new Variable[variables.length];
+			int localsX = BORDER + PADDING;
+			for (int i = 0; i < variables.length; i++) {
+				Variable variable = this.variables[i] = new Variable(this, gc, heap, localsX, y, table, variables[i]);
+				y += variable.height;
+				y += PADDING;
+			}
+			y += BORDER;
+			this.height = y;
 		}
 		
 		@Override
@@ -353,13 +372,17 @@ class MachineStateCanvas extends Canvas {
 			gc.setBackground(objectColor);
 			gc.fillRoundRectangle(0, 0, this.width, this.height, 10, 10);
 			gc.drawRoundRectangle(0, 0, this.width, this.height, 10, 10);
-			gc.drawString(this.className + " (id=" + id + ")", BORDER + PADDING, BORDER + PADDING);
+			gc.drawString(this.title, BORDER + PADDING, BORDER + PADDING);
+			super.paint(gc);
 			gc.setBackground(oldBackground);
 		}
 	}
 
 
 	class Heap extends Element {
+		
+		static final int PADDING = 10;
+		
 		int nextX = 30;
 		int nextY = MachineStateCanvas.OUTER_MARGIN;
 		
@@ -370,15 +393,16 @@ class MachineStateCanvas extends Canvas {
 			this.x = 300;
 		}
 		
-		JavaObject get(IJavaObject javaObject) throws DebugException {
+		JavaObject get(GC gc, IJavaObject javaObject) throws DebugException {
 			long id = javaObject.getUniqueId();
 			JavaObject result = objects.get(id);
 			if (result == null) {
 				result = new JavaObject(nextX, nextY, id);
-				nextY += 100;
+				result.setState(gc, javaObject);
+				nextY += result.height + PADDING;
 				objects.put(id, result);
-			}
-			result.setState(javaObject);
+			} else
+				result.setState(gc, javaObject);
 			return result;
 		}
 	}
@@ -415,8 +439,8 @@ class MachineStateCanvas extends Canvas {
 				throw new RuntimeException(e);
 			}
 			if (stack != null) {
-				machine.paint(gc);
 				arrows = new ArrayList<>();
+				machine.paint(gc);
 				stack.paint(gc);
 				for (Arrow arrow : arrows)
 					arrow.paint(gc);
