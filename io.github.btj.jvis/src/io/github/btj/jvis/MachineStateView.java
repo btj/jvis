@@ -41,6 +41,15 @@ class Element {
 			parent.add(this);
 	}
 	
+	void mapPoint(Point point, Element ancestor) {
+		Element e = this;
+		while (e != ancestor) {
+			point.x += e.x;
+			point.y += e.y;
+			e = e.parent;
+		}
+	}
+	
 	void remove(Element child) {
 		if (child.parent != this) throw new AssertionError();
 		child.parent = null;
@@ -55,15 +64,16 @@ class Element {
 	}
 	
 	void paint(GC gc) {
-		//Transform transform = new Transform(gc.getDevice());
-		//gc.getTransform(transform);
+		Transform transform = new Transform(gc.getDevice());
+		gc.getTransform(transform);
 		for (Element child : children) {
-			//transform.translate(x, y);
-			//gc.setTransform(transform);
+			transform.translate(child.x, child.y);
+			gc.setTransform(transform);
 			child.paint(gc);
-			//transform.translate(-x, -y);
-			//gc.setTransform(transform);
+			transform.translate(-child.x, -child.y);
+			gc.setTransform(transform);
 		}
+		transform.dispose();
 	}
 }
 
@@ -83,30 +93,33 @@ class Arrow {
 	static void paintArrow(GC gc, int fromX, int fromY, Element toElement) {
 		int toX, toY;
 		
-		if (fromX < toElement.x)
-			toX = toElement.x;
-		else if (fromX < toElement.x + toElement.width)
+		Point toElementOrigin = new Point(0, 0);
+		toElement.mapPoint(toElementOrigin, null);
+		
+		if (fromX < toElementOrigin.x)
+			toX = toElementOrigin.x;
+		else if (fromX < toElementOrigin.x + toElement.width)
 			toX = fromX;
 		else
-			toX = toElement.x + toElement.width;
+			toX = toElementOrigin.x + toElement.width;
 		
-		if (fromY < toElement.y)
-			toY = toElement.y;
-		else if (fromY < toElement.y + toElement.height)
+		if (fromY < toElementOrigin.y)
+			toY = toElementOrigin.y;
+		else if (fromY < toElementOrigin.y + toElement.height)
 			toY = fromY;
 		else
-			toY = toElement.y + toElement.height;
+			toY = toElementOrigin.y + toElement.height;
 		
 		if ((toX - fromX) * (toX - fromX) + (toY - fromY) * (toY - fromY) < 400) {
 			// Avoid too short an arrow; point to the furthest corner
-			if (fromX < toElement.x + toElement.width / 2)
-				toX = toElement.x + toElement.width;
+			if (fromX < toElementOrigin.x + toElement.width / 2)
+				toX = toElementOrigin.x + toElement.width;
 			else
 				toX = toElement.x;
-			if (fromY < toElement.y + toElement.height / 2)
-				toY = toElement.y + toElement.height;
+			if (fromY < toElementOrigin.y + toElement.height / 2)
+				toY = toElementOrigin.y + toElement.height;
 			else
-				toY = toElement.y;
+				toY = toElementOrigin.y;
 		}
 		
 		int length = (int)Math.sqrt((toX - fromX) * (toX - fromX) + (toY - fromY) * (toY - fromY));
@@ -148,6 +161,7 @@ class MachineStateCanvas extends Canvas {
 	
 	Font boldFont;
 	Color objectColor;
+	Element machine;
 	Heap heap;
 	CallStack stack;
 	List<Arrow> arrows; // Only meaningful during a paint()
@@ -183,18 +197,43 @@ class MachineStateCanvas extends Canvas {
 		
 		@Override
 		void paint(GC gc) {
-			gc.drawString(this.name, this.x + this.table.namesWidth - this.nameExtent.x - INNER_PADDING, this.y + PADDING);
+			gc.drawString(this.name, this.table.namesWidth - this.nameExtent.x - INNER_PADDING, PADDING);
 			Color oldBackground = gc.getBackground();
 			gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_WHITE));
-			gc.fillRectangle(this.x + this.table.namesWidth + 2, this.y, this.table.valuesWidth - 2, this.height);
+			gc.fillRectangle(this.table.namesWidth + 2, 0, this.table.valuesWidth - 2, this.height);
 			if (this.value instanceof String) {
 				String valueString = (String)this.value;
-				gc.drawString(valueString, this.x + this.table.namesWidth + INNER_PADDING, this.y + PADDING);
+				gc.drawString(valueString, this.table.namesWidth + INNER_PADDING, PADDING);
 			} else {
-				arrows.add(new Arrow(this.x + this.table.namesWidth + this.table.valuesWidth / 2, this.y + this.height / 2, (JavaObject)this.value));
+				Point from = new Point(this.table.namesWidth + this.table.valuesWidth / 2, this.height / 2);
+				mapPoint(from, null);
+				arrows.add(new Arrow(from.x, from.y, (JavaObject)this.value));
 			}
 			gc.setBackground(oldBackground);
 		}
+	}
+	
+	class ReturnFrame extends Element {
+		final static int BORDER = StackFrame.BORDER;
+		final static int PADDING = StackFrame.PADDING;
+		
+		Variable returnValue;
+		
+		ReturnFrame(GC gc, int y, int localsX, IVariable returnValue) throws DebugException {
+			super(stack);
+			this.x = MachineStateCanvas.OUTER_MARGIN;
+			this.y = y;
+			this.width = BORDER + PADDING + stack.table.namesWidth + stack.table.valuesWidth + PADDING + BORDER;
+			this.returnValue = new Variable(this, gc, heap, localsX, BORDER + PADDING, stack.table, returnValue);
+		}
+		
+		void paint(GC gc) {
+			gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GRAY));
+			gc.fillRectangle(0, 0, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
+			gc.drawRectangle(0, 0, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
+			super.paint(gc);
+		}
+		
 	}
 	
 	class StackFrame extends Element {
@@ -206,13 +245,13 @@ class MachineStateCanvas extends Canvas {
 		Point methodExtent;
 		Variable[] locals;
 		boolean active;
-		Variable returnValue;
 		
 		StackFrame(GC gc, Heap heap, int y, IStackFrame frame, boolean active) throws DebugException {
 			super(stack);
 			this.active = active;
 			this.x = MachineStateCanvas.OUTER_MARGIN;
 			this.y = y;
+			y = 0;
 			this.width = BORDER + PADDING + stack.table.namesWidth + stack.table.valuesWidth + PADDING + BORDER;
 			if (frame instanceof IJavaStackFrame) {
 				IJavaStackFrame javaFrame = (IJavaStackFrame)frame;
@@ -238,38 +277,32 @@ class MachineStateCanvas extends Canvas {
 				System.arraycopy(variables, 1, variables = new IVariable[length - 1], 0, length - 1);
 			}
 			this.locals = new Variable[variables.length];
-			int localsX = this.x + BORDER + PADDING;
+			int localsX = BORDER + PADDING;
 			for (int i = 0; i < variables.length; i++) {
 				IVariable variable = variables[i];
 				Variable local = locals[i] = new Variable(this, gc, heap, localsX, y, stack.table, variable);
 				y += local.height + PADDING;
 			}
 			y += BORDER;
-			this.height = y - this.y;
+			this.height = y;
 			if (returnValue != null && !returnValue.getName().equals("no method return value") && !returnValue.getReferenceTypeName().equals("void")) {
-				y += BORDER + PADDING;
-				this.returnValue = new Variable(this, gc, heap, localsX, y, stack.table, returnValue);
+				new ReturnFrame(gc, this.y + y, localsX, returnValue);
 			}
 		}
 		
 		@Override
 		void paint(GC gc) {
 			gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GREEN));  //active ? SWT.COLOR_YELLOW : SWT.COLOR_GREEN));
-			gc.fillRectangle(this.x, this.y, this.width, this.height);
+			gc.fillRectangle(0, 0, this.width, this.height);
 			int oldWidth = gc.getLineWidth();
 			if (active)
 				gc.setLineWidth(2);
-			gc.drawRectangle(this.x, this.y, this.width, this.height);
+			gc.drawRectangle(0, 0, this.width, this.height);
 			gc.setLineWidth(oldWidth);
 			//Font oldFont = gc.getFont();
 			//gc.setFont(methodFont);
-			gc.drawString(this.method, this.x + (this.width - this.methodExtent.x) / 2 , this.y + BORDER + PADDING);
+			gc.drawString(this.method, (this.width - this.methodExtent.x) / 2 , BORDER + PADDING);
 			//gc.setFont(oldFont);
-			if (this.returnValue != null) {
-				gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GRAY));
-				gc.fillRectangle(this.x, this.y + this.height, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
-				gc.drawRectangle(this.x, this.y + this.height, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
-			}
 			super.paint(gc);
 		}
 	}
@@ -318,22 +351,23 @@ class MachineStateCanvas extends Canvas {
 		void paint(GC gc) {
 			Color oldBackground = gc.getBackground();
 			gc.setBackground(objectColor);
-			gc.fillRoundRectangle(this.x, this.y, this.width, this.height, 10, 10);
-			gc.drawRoundRectangle(this.x, this.y, this.width, this.height, 10, 10);
-			gc.drawString(this.className + " (id=" + id + ")", this.x + BORDER + PADDING, this.y + BORDER + PADDING);
+			gc.fillRoundRectangle(0, 0, this.width, this.height, 10, 10);
+			gc.drawRoundRectangle(0, 0, this.width, this.height, 10, 10);
+			gc.drawString(this.className + " (id=" + id + ")", BORDER + PADDING, BORDER + PADDING);
 			gc.setBackground(oldBackground);
 		}
 	}
 
 
 	class Heap extends Element {
-		int nextX = 300 + 30;
+		int nextX = 30;
 		int nextY = MachineStateCanvas.OUTER_MARGIN;
 		
 		HashMap<Long, JavaObject> objects = new HashMap<>();
 		
 		Heap() {
-			super(null);
+			super(machine);
+			this.x = 300;
 		}
 		
 		JavaObject get(IJavaObject javaObject) throws DebugException {
@@ -362,6 +396,7 @@ class MachineStateCanvas extends Canvas {
 	}
 
 	void paint(PaintEvent event) {
+		GC gc = event.gc;
 		IDebugTarget[] targets = DebugPlugin.getDefault().getLaunchManager().getDebugTargets();
 		if (targets.length > 0) {
 			try {
@@ -369,23 +404,26 @@ class MachineStateCanvas extends Canvas {
 				if (threads.length > 0) {
 					IStackFrame[] frames = threads[0].getStackFrames();
 					if (frames.length > 0) {
-						if (heap == null)
+						if (heap == null) {
+							machine = new Element(null);
 							heap = new Heap();
-						new CallStack(event.gc, heap, frames);
+						}
+						new CallStack(gc, heap, frames);
 					}
 				}
 			} catch (DebugException e) {
 				throw new RuntimeException(e);
 			}
 			if (stack != null) {
-				heap.paint(event.gc);
+				machine.paint(gc);
 				arrows = new ArrayList<>();
-				stack.paint(event.gc);
+				stack.paint(gc);
 				for (Arrow arrow : arrows)
-					arrow.paint(event.gc);
+					arrow.paint(gc);
 				arrows = null;
 			}
 		} else {
+			machine = null;
 			heap = null;
 			stack = null;
 			event.gc.drawString("No program running.", 1, 1);
