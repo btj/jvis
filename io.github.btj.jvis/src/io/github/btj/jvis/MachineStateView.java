@@ -21,6 +21,7 @@ import org.eclipse.jdt.debug.core.IJavaObject;
 import org.eclipse.jdt.debug.core.IJavaReferenceType;
 import org.eclipse.jdt.debug.core.IJavaStackFrame;
 import org.eclipse.jdt.debug.core.IJavaValue;
+import org.eclipse.jdt.debug.core.IJavaVariable;
 import org.eclipse.jface.resource.FontDescriptor;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.PaintEvent;
@@ -243,7 +244,6 @@ class MachineStateCanvas extends Canvas {
 		
 		String method;
 		Point methodExtent;
-		Variable[] locals;
 		boolean active;
 		
 		StackFrame(GC gc, Heap heap, int y, IStackFrame frame, boolean active) throws DebugException {
@@ -276,12 +276,13 @@ class MachineStateCanvas extends Canvas {
 				int length = variables.length;
 				System.arraycopy(variables, 1, variables = new IVariable[length - 1], 0, length - 1);
 			}
-			this.locals = new Variable[variables.length];
 			int localsX = BORDER + PADDING;
 			for (int i = 0; i < variables.length; i++) {
 				IVariable variable = variables[i];
-				Variable local = locals[i] = new Variable(this, gc, heap, localsX, y, stack.table, variable);
-				y += local.height + PADDING;
+				if (!(variable.getName().equals("Lambda") || variable instanceof IJavaVariable && ((IJavaVariable)variable).isStatic())) {
+					Variable local = new Variable(this, gc, heap, localsX, y, stack.table, variable);
+					y += local.height + PADDING;
+				}
 			}
 			y += BORDER;
 			this.height = y;
@@ -310,18 +311,18 @@ class MachineStateCanvas extends Canvas {
 	class CallStack extends Element {
 
 		VariablesTable table = new VariablesTable();
-		StackFrame[] stackFrames;
 
 		CallStack(GC gc, Heap heap, IStackFrame[] frames) throws DebugException {
 			super(null);
 			stack = this;
-			stackFrames = new StackFrame[frames.length];
 			int y = MachineStateCanvas.OUTER_MARGIN;
 			for (int i = 0; i < frames.length; i++) {
 				IStackFrame frame = frames[frames.length - i - 1];
 				boolean active = i == frames.length - 1;
-				StackFrame stackFrame = stackFrames[i] = new StackFrame(gc, heap, y, frame, active);
-				y += stackFrame.height;
+				if (active || !(frame instanceof IJavaStackFrame && ((IJavaStackFrame)frame).getDeclaringTypeName().contains("$$Lambda$"))) {
+					StackFrame stackFrame = new StackFrame(gc, heap, y, frame, active);
+					y += stackFrame.height;
+				}
 			}
 		}
 	}
@@ -358,9 +359,11 @@ class MachineStateCanvas extends Canvas {
 			this.variables = new Variable[variables.length];
 			int localsX = BORDER + PADDING;
 			for (int i = 0; i < variables.length; i++) {
-				Variable variable = this.variables[i] = new Variable(this, gc, heap, localsX, y, table, variables[i]);
-				y += variable.height;
-				y += PADDING;
+				if (!(variables[i] instanceof IJavaVariable && ((IJavaVariable)variables[i]).isStatic())) {
+					Variable variable = this.variables[i] = new Variable(this, gc, heap, localsX, y, table, variables[i]);
+					y += variable.height;
+					y += PADDING;
+				}
 			}
 			y += BORDER;
 			this.height = y;
