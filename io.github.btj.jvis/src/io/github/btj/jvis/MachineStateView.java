@@ -128,8 +128,8 @@ class Arrow {
 		
 		int arrowBaseX = toX + (fromX - toX) * ARROWHEAD_LENGTH / length;
 		int arrowBaseY = toY + (fromY - toY) * ARROWHEAD_LENGTH / length;
-		int vecX = (toY - fromY) * ARROWHEAD_WIDTH / length;
-		int vecY = (fromX - toX) * ARROWHEAD_WIDTH / length;
+		int vecX = (toY - fromY) * ARROWHEAD_WIDTH  / 2 / length;
+		int vecY = (fromX - toX) * ARROWHEAD_WIDTH / 2 / length;
 		
 		Color oldBackground = gc.getBackground();
 		gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_BLACK));
