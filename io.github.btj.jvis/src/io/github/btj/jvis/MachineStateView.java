@@ -17,9 +17,11 @@ import org.eclipse.debug.core.model.IStackFrame;
 import org.eclipse.debug.core.model.IThread;
 import org.eclipse.debug.core.model.IValue;
 import org.eclipse.debug.core.model.IVariable;
+import org.eclipse.jdt.debug.core.IJavaArray;
 import org.eclipse.jdt.debug.core.IJavaObject;
 import org.eclipse.jdt.debug.core.IJavaReferenceType;
 import org.eclipse.jdt.debug.core.IJavaStackFrame;
+import org.eclipse.jdt.debug.core.IJavaType;
 import org.eclipse.jdt.debug.core.IJavaValue;
 import org.eclipse.jdt.debug.core.IJavaVariable;
 import org.eclipse.jface.resource.FontDescriptor;
@@ -165,6 +167,7 @@ class MachineStateCanvas extends Canvas {
 	Element machine;
 	Heap heap;
 	CallStack stack;
+	List<Runnable> delayedInitializers;
 	List<Arrow> arrows; // Only meaningful during a paint()
 	
 	class Variable extends Element {
@@ -178,6 +181,29 @@ class MachineStateCanvas extends Canvas {
 		Object value;
 		Point valueExtent;
 	
+		void setValue(GC gc, IValue value) throws DebugException {
+			if (!(value instanceof IJavaValue))
+				return;
+			IJavaValue javaValue = (IJavaValue)value;
+			IJavaType javaType = javaValue.getJavaType();
+			if (!(javaType instanceof IJavaReferenceType))
+				return;
+			if (javaValue.isNull())
+				return;
+			if (javaType.getName().equals("java.lang.String")) {
+				this.value = '"' + (String)this.value + '"' + " (id=" + ((IJavaObject)javaValue).getUniqueId() + ")";
+				return;
+			}
+			delayedInitializers.add(() -> {
+				try {
+					this.value = heap.get(gc, (IJavaObject)value);
+				} catch (DebugException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}					
+			});
+		}
+		
 		Variable(Element parent, GC gc, Heap heap, int x, int y, VariablesTable table, IVariable variable) throws DebugException {
 			super(parent);
 			this.x = x;
@@ -190,9 +216,7 @@ class MachineStateCanvas extends Canvas {
 			String valueString = value.getValueString();
 			this.value = valueString;
 			this.valueExtent = gc.stringExtent(valueString);
-			if (value instanceof IJavaValue && ((IJavaValue)value).getJavaType() instanceof IJavaReferenceType && !((IJavaValue)value).isNull()) {
-				this.value = heap.get(gc, (IJavaObject)value);
-			}
+			setValue(gc, value);
 			this.height = PADDING + Math.max(this.nameExtent.y, this.valueExtent.y) + PADDING;
 		}
 		
@@ -350,7 +374,9 @@ class MachineStateCanvas extends Canvas {
 		
 		void setState(GC gc, IJavaObject javaObject) throws DebugException {
 			className = MachineStateCanvas.chopPackageName(javaObject.getReferenceTypeName());
-			title = this.className + "(id=" + id + ")";
+			title = this.className + " (id=" + id + ")";
+			if (javaObject instanceof IJavaArray)
+				title += " (length=" + ((IJavaArray)javaObject).getLength() + ")";
 			titleExtent = gc.stringExtent(title);
 			int y = BORDER + PADDING;
 			y += titleExtent.y;
@@ -435,7 +461,15 @@ class MachineStateCanvas extends Canvas {
 							machine = new Element(null);
 							heap = new Heap();
 						}
+						delayedInitializers = new ArrayList<>();
 						new CallStack(gc, heap, frames);
+						while (!delayedInitializers.isEmpty()) {
+							List<Runnable> oldDelayedInitializers = delayedInitializers;
+							delayedInitializers = new ArrayList<>();
+							for (Runnable r : oldDelayedInitializers)
+								r.run();
+						}
+						delayedInitializers = null;
 					}
 				}
 			} catch (DebugException e) {
