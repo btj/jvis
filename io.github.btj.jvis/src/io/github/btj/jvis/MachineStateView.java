@@ -258,7 +258,7 @@ class StackFrame extends Element {
 		}
 		y += BORDER;
 		this.height = y - this.y;
-		if (returnValue != null && !returnValue.getName().equals("no method return value")) {
+		if (returnValue != null && !returnValue.getName().equals("no method return value") && !returnValue.getReferenceTypeName().equals("void")) {
 			y += BORDER + PADDING;
 			this.returnValue = new Variable(gc, heap, localsX, y, namesWidth, valuesWidth, returnValue);
 		}
