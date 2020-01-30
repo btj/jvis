@@ -36,6 +36,11 @@ class Element {
 	ArrayList<Element> children = new ArrayList<>();
 	int x, y, width, height;
 	
+	Element(Element parent) {
+		if (parent != null)
+			parent.add(this);
+	}
+	
 	void remove(Element child) {
 		if (child.parent != this) throw new AssertionError();
 		child.parent = null;
@@ -158,7 +163,8 @@ class MachineStateCanvas extends Canvas {
 		Object value;
 		Point valueExtent;
 	
-		Variable(GC gc, Heap heap, int x, int y, VariablesTable table, IVariable variable) throws DebugException {
+		Variable(Element parent, GC gc, Heap heap, int x, int y, VariablesTable table, IVariable variable) throws DebugException {
+			super(parent);
 			this.x = x;
 			this.y = y;
 			this.table = table;
@@ -203,6 +209,7 @@ class MachineStateCanvas extends Canvas {
 		Variable returnValue;
 		
 		StackFrame(GC gc, Heap heap, int y, IStackFrame frame, boolean active) throws DebugException {
+			super(stack);
 			this.active = active;
 			this.x = MachineStateCanvas.OUTER_MARGIN;
 			this.y = y;
@@ -234,14 +241,14 @@ class MachineStateCanvas extends Canvas {
 			int localsX = this.x + BORDER + PADDING;
 			for (int i = 0; i < variables.length; i++) {
 				IVariable variable = variables[i];
-				Variable local = locals[i] = new Variable(gc, heap, localsX, y, stack.table, variable);
+				Variable local = locals[i] = new Variable(this, gc, heap, localsX, y, stack.table, variable);
 				y += local.height + PADDING;
 			}
 			y += BORDER;
 			this.height = y - this.y;
 			if (returnValue != null && !returnValue.getName().equals("no method return value") && !returnValue.getReferenceTypeName().equals("void")) {
 				y += BORDER + PADDING;
-				this.returnValue = new Variable(gc, heap, localsX, y, stack.table, returnValue);
+				this.returnValue = new Variable(this, gc, heap, localsX, y, stack.table, returnValue);
 			}
 		}
 		
@@ -258,14 +265,12 @@ class MachineStateCanvas extends Canvas {
 			//gc.setFont(methodFont);
 			gc.drawString(this.method, this.x + (this.width - this.methodExtent.x) / 2 , this.y + BORDER + PADDING);
 			//gc.setFont(oldFont);
-			for (Variable v : this.locals)
-				v.paint(gc);
 			if (this.returnValue != null) {
 				gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GRAY));
 				gc.fillRectangle(this.x, this.y + this.height, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
 				gc.drawRectangle(this.x, this.y + this.height, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
-				returnValue.paint(gc);
 			}
+			super.paint(gc);
 		}
 	}
 	
@@ -275,6 +280,7 @@ class MachineStateCanvas extends Canvas {
 		StackFrame[] stackFrames;
 
 		CallStack(GC gc, Heap heap, IStackFrame[] frames) throws DebugException {
+			super(null);
 			stack = this;
 			stackFrames = new StackFrame[frames.length];
 			int y = MachineStateCanvas.OUTER_MARGIN;
@@ -284,12 +290,6 @@ class MachineStateCanvas extends Canvas {
 				StackFrame stackFrame = stackFrames[i] = new StackFrame(gc, heap, y, frame, active);
 				y += stackFrame.height;
 			}
-		}
-		
-		@Override
-		void paint(GC gc) {
-			for (StackFrame frame : stackFrames)
-				frame.paint(gc);
 		}
 	}
 	
@@ -302,6 +302,7 @@ class MachineStateCanvas extends Canvas {
 		String className;
 		
 		JavaObject(int x, int y, long id) {
+			super(heap);
 			this.x = x;
 	        this.y = y;
 	        this.id = id;
@@ -326,14 +327,13 @@ class MachineStateCanvas extends Canvas {
 
 
 	class Heap extends Element {
-		Color objectColor;
 		int nextX = 300 + 30;
 		int nextY = MachineStateCanvas.OUTER_MARGIN;
 		
 		HashMap<Long, JavaObject> objects = new HashMap<>();
 		
-		Heap(Color objectColor) {
-			this.objectColor = objectColor;
+		Heap() {
+			super(null);
 		}
 		
 		JavaObject get(IJavaObject javaObject) throws DebugException {
@@ -346,12 +346,6 @@ class MachineStateCanvas extends Canvas {
 			}
 			result.setState(javaObject);
 			return result;
-		}
-		
-		@Override
-		void paint(GC gc) {
-			for (JavaObject object : objects.values())
-				object.paint(gc);
 		}
 	}
 
@@ -376,7 +370,7 @@ class MachineStateCanvas extends Canvas {
 					IStackFrame[] frames = threads[0].getStackFrames();
 					if (frames.length > 0) {
 						if (heap == null)
-							heap = new Heap(objectColor);
+							heap = new Heap();
 						new CallStack(event.gc, heap, frames);
 					}
 				}
