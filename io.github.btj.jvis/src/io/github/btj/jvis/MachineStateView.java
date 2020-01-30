@@ -28,6 +28,7 @@ import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Font;
 import org.eclipse.swt.graphics.GC;
 import org.eclipse.swt.graphics.Point;
+import org.eclipse.swt.graphics.Transform;
 import org.eclipse.ui.part.ViewPart;
 
 class Element {
@@ -48,6 +49,17 @@ class Element {
 		child.parent = this;
 	}
 	
+	void paint(GC gc) {
+		//Transform transform = new Transform(gc.getDevice());
+		//gc.getTransform(transform);
+		for (Element child : children) {
+			//transform.translate(x, y);
+			//gc.setTransform(transform);
+			child.paint(gc);
+			//transform.translate(-x, -y);
+			//gc.setTransform(transform);
+		}
+	}
 }
 
 class Arrow {
@@ -163,7 +175,8 @@ class MachineStateCanvas extends Canvas {
 			this.height = PADDING + Math.max(this.nameExtent.y, this.valueExtent.y) + PADDING;
 		}
 		
-		void paint(GC gc, List<Arrow> arrows) {
+		@Override
+		void paint(GC gc) {
 			gc.drawString(this.name, this.x + this.table.namesWidth - this.nameExtent.x - INNER_PADDING, this.y + PADDING);
 			Color oldBackground = gc.getBackground();
 			gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_WHITE));
@@ -193,7 +206,7 @@ class MachineStateCanvas extends Canvas {
 			this.active = active;
 			this.x = MachineStateCanvas.OUTER_MARGIN;
 			this.y = y;
-			this.width = BORDER + PADDING + stack.namesWidth + stack.valuesWidth + PADDING + BORDER;
+			this.width = BORDER + PADDING + stack.table.namesWidth + stack.table.valuesWidth + PADDING + BORDER;
 			if (frame instanceof IJavaStackFrame) {
 				IJavaStackFrame javaFrame = (IJavaStackFrame)frame;
 				String className = chopPackageName(javaFrame.getDeclaringTypeName());
@@ -221,17 +234,18 @@ class MachineStateCanvas extends Canvas {
 			int localsX = this.x + BORDER + PADDING;
 			for (int i = 0; i < variables.length; i++) {
 				IVariable variable = variables[i];
-				Variable local = locals[i] = new Variable(gc, heap, localsX, y, stack, variable);
+				Variable local = locals[i] = new Variable(gc, heap, localsX, y, stack.table, variable);
 				y += local.height + PADDING;
 			}
 			y += BORDER;
 			this.height = y - this.y;
 			if (returnValue != null && !returnValue.getName().equals("no method return value") && !returnValue.getReferenceTypeName().equals("void")) {
 				y += BORDER + PADDING;
-				this.returnValue = new Variable(gc, heap, localsX, y, stack, returnValue);
+				this.returnValue = new Variable(gc, heap, localsX, y, stack.table, returnValue);
 			}
 		}
 		
+		@Override
 		void paint(GC gc) {
 			gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GREEN));  //active ? SWT.COLOR_YELLOW : SWT.COLOR_GREEN));
 			gc.fillRectangle(this.x, this.y, this.width, this.height);
@@ -245,18 +259,19 @@ class MachineStateCanvas extends Canvas {
 			gc.drawString(this.method, this.x + (this.width - this.methodExtent.x) / 2 , this.y + BORDER + PADDING);
 			//gc.setFont(oldFont);
 			for (Variable v : this.locals)
-				v.paint(gc, arrows);
+				v.paint(gc);
 			if (this.returnValue != null) {
 				gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GRAY));
 				gc.fillRectangle(this.x, this.y + this.height, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
 				gc.drawRectangle(this.x, this.y + this.height, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
-				returnValue.paint(gc, arrows);
+				returnValue.paint(gc);
 			}
 		}
 	}
 	
-	class CallStack extends VariablesTable {
-		
+	class CallStack extends Element {
+
+		VariablesTable table = new VariablesTable();
 		StackFrame[] stackFrames;
 
 		CallStack(GC gc, Heap heap, IStackFrame[] frames) throws DebugException {
@@ -271,6 +286,7 @@ class MachineStateCanvas extends Canvas {
 			}
 		}
 		
+		@Override
 		void paint(GC gc) {
 			for (StackFrame frame : stackFrames)
 				frame.paint(gc);
@@ -297,6 +313,7 @@ class MachineStateCanvas extends Canvas {
 			className = MachineStateCanvas.chopPackageName(javaObject.getReferenceTypeName());
 		}
 		
+		@Override
 		void paint(GC gc) {
 			Color oldBackground = gc.getBackground();
 			gc.setBackground(objectColor);
@@ -308,7 +325,7 @@ class MachineStateCanvas extends Canvas {
 	}
 
 
-	class Heap {
+	class Heap extends Element {
 		Color objectColor;
 		int nextX = 300 + 30;
 		int nextY = MachineStateCanvas.OUTER_MARGIN;
@@ -331,6 +348,7 @@ class MachineStateCanvas extends Canvas {
 			return result;
 		}
 		
+		@Override
 		void paint(GC gc) {
 			for (JavaObject object : objects.values())
 				object.paint(gc);
