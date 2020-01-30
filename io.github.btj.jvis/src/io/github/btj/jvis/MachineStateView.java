@@ -31,66 +31,23 @@ import org.eclipse.swt.graphics.Point;
 import org.eclipse.ui.part.ViewPart;
 
 class Element {
+	Element parent;
+	ArrayList<Element> children = new ArrayList<>();
 	int x, y, width, height;
-}
-
-class JavaObject extends Element {
 	
-	static final int BORDER = 2;
-	static final int PADDING = 3;
-	
-	long id;
-	String className;
-	
-	JavaObject(int x, int y, long id) {
-		this.x = x;
-        this.y = y;
-        this.id = id;
-        this.width = 200;
-        this.height = 50;
+	void remove(Element child) {
+		if (child.parent != this) throw new AssertionError();
+		child.parent = null;
+		children.remove(child);
 	}
 	
-	void setState(IJavaObject javaObject) throws DebugException {
-		className = MachineStateCanvas.chopPackageName(javaObject.getReferenceTypeName());
+	void add(Element child) {
+		if (child.parent != null)
+			child.parent.remove(child);
+		children.add(child);
+		child.parent = this;
 	}
 	
-	void paint(GC gc, Color objectColor) {
-		Color oldBackground = gc.getBackground();
-		gc.setBackground(objectColor);
-		gc.fillRoundRectangle(this.x, this.y, this.width, this.height, 10, 10);
-		gc.drawRoundRectangle(this.x, this.y, this.width, this.height, 10, 10);
-		gc.drawString(this.className + " (id=" + id + ")", this.x + BORDER + PADDING, this.y + BORDER + PADDING);
-		gc.setBackground(oldBackground);
-	}
-}
-
-class Heap {
-	Color objectColor;
-	int nextX = 300 + 30;
-	int nextY = MachineStateCanvas.OUTER_MARGIN;
-	
-	HashMap<Long, JavaObject> objects = new HashMap<>();
-	
-	Heap(Color objectColor) {
-		this.objectColor = objectColor;
-	}
-	
-	JavaObject get(IJavaObject javaObject) throws DebugException {
-		long id = javaObject.getUniqueId();
-		JavaObject result = objects.get(id);
-		if (result == null) {
-			result = new JavaObject(nextX, nextY, id);
-			nextY += 100;
-			objects.put(id, result);
-		}
-		result.setState(javaObject);
-		return result;
-	}
-	
-	void paint(GC gc) {
-		for (JavaObject object : objects.values())
-			object.paint(gc, objectColor);
-	}
 }
 
 class Arrow {
@@ -155,49 +112,6 @@ class Arrow {
 	}
 }
 
-class Variable extends Element {
-
-	final static int PADDING = 1;
-	final static int INNER_PADDING = 3;
-	
-	VariablesTable table;
-	String name;
-	Point nameExtent;
-	Object value;
-	Point valueExtent;
-
-	Variable(GC gc, Heap heap, int x, int y, VariablesTable table, IVariable variable) throws DebugException {
-		this.x = x;
-		this.y = y;
-		this.table = table;
-		this.width = table.namesWidth + table.valuesWidth;
-		this.name = variable.getName();
-		this.nameExtent = gc.stringExtent(this.name);
-		IValue value = variable.getValue();
-		String valueString = value.getValueString();
-		this.value = valueString;
-		this.valueExtent = gc.stringExtent(valueString);
-		if (value instanceof IJavaValue && ((IJavaValue)value).getJavaType() instanceof IJavaReferenceType && !((IJavaValue)value).isNull()) {
-			this.value = heap.get((IJavaObject)value);
-		}
-		this.height = PADDING + Math.max(this.nameExtent.y, this.valueExtent.y) + PADDING;
-	}
-	
-	void paint(GC gc, List<Arrow> arrows) {
-		gc.drawString(this.name, this.x + this.table.namesWidth - this.nameExtent.x - INNER_PADDING, this.y + PADDING);
-		Color oldBackground = gc.getBackground();
-		gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_WHITE));
-		gc.fillRectangle(this.x + this.table.namesWidth + 2, this.y, this.table.valuesWidth - 2, this.height);
-		if (this.value instanceof String) {
-			String valueString = (String)this.value;
-			gc.drawString(valueString, this.x + this.table.namesWidth + INNER_PADDING, this.y + PADDING);
-		} else {
-			arrows.add(new Arrow(this.x + this.table.namesWidth + this.table.valuesWidth / 2, this.y + this.height / 2, (JavaObject)this.value));
-		}
-		gc.setBackground(oldBackground);
-	}
-}
-
 class VariablesTable {
 	int namesWidth = 150;
 	int valuesWidth = 150;
@@ -219,6 +133,50 @@ class MachineStateCanvas extends Canvas {
 	Color objectColor;
 	Heap heap;
 	CallStack stack;
+	List<Arrow> arrows; // Only meaningful during a paint()
+	
+	class Variable extends Element {
+	
+		final static int PADDING = 1;
+		final static int INNER_PADDING = 3;
+		
+		VariablesTable table;
+		String name;
+		Point nameExtent;
+		Object value;
+		Point valueExtent;
+	
+		Variable(GC gc, Heap heap, int x, int y, VariablesTable table, IVariable variable) throws DebugException {
+			this.x = x;
+			this.y = y;
+			this.table = table;
+			this.width = table.namesWidth + table.valuesWidth;
+			this.name = variable.getName();
+			this.nameExtent = gc.stringExtent(this.name);
+			IValue value = variable.getValue();
+			String valueString = value.getValueString();
+			this.value = valueString;
+			this.valueExtent = gc.stringExtent(valueString);
+			if (value instanceof IJavaValue && ((IJavaValue)value).getJavaType() instanceof IJavaReferenceType && !((IJavaValue)value).isNull()) {
+				this.value = heap.get((IJavaObject)value);
+			}
+			this.height = PADDING + Math.max(this.nameExtent.y, this.valueExtent.y) + PADDING;
+		}
+		
+		void paint(GC gc, List<Arrow> arrows) {
+			gc.drawString(this.name, this.x + this.table.namesWidth - this.nameExtent.x - INNER_PADDING, this.y + PADDING);
+			Color oldBackground = gc.getBackground();
+			gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_WHITE));
+			gc.fillRectangle(this.x + this.table.namesWidth + 2, this.y, this.table.valuesWidth - 2, this.height);
+			if (this.value instanceof String) {
+				String valueString = (String)this.value;
+				gc.drawString(valueString, this.x + this.table.namesWidth + INNER_PADDING, this.y + PADDING);
+			} else {
+				arrows.add(new Arrow(this.x + this.table.namesWidth + this.table.valuesWidth / 2, this.y + this.height / 2, (JavaObject)this.value));
+			}
+			gc.setBackground(oldBackground);
+		}
+	}
 	
 	class StackFrame extends Element {
 		
@@ -274,7 +232,7 @@ class MachineStateCanvas extends Canvas {
 			}
 		}
 		
-		void paint(GC gc, List<Arrow> arrows) {
+		void paint(GC gc) {
 			gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GREEN));  //active ? SWT.COLOR_YELLOW : SWT.COLOR_GREEN));
 			gc.fillRectangle(this.x, this.y, this.width, this.height);
 			int oldWidth = gc.getLineWidth();
@@ -313,9 +271,69 @@ class MachineStateCanvas extends Canvas {
 			}
 		}
 		
-		void paint(GC gc, List<Arrow> arrows) {
+		void paint(GC gc) {
 			for (StackFrame frame : stackFrames)
-				frame.paint(gc, arrows);
+				frame.paint(gc);
+		}
+	}
+	
+	class JavaObject extends Element {
+		
+		static final int BORDER = 2;
+		static final int PADDING = 3;
+		
+		long id;
+		String className;
+		
+		JavaObject(int x, int y, long id) {
+			this.x = x;
+	        this.y = y;
+	        this.id = id;
+	        this.width = 200;
+	        this.height = 50;
+		}
+		
+		void setState(IJavaObject javaObject) throws DebugException {
+			className = MachineStateCanvas.chopPackageName(javaObject.getReferenceTypeName());
+		}
+		
+		void paint(GC gc) {
+			Color oldBackground = gc.getBackground();
+			gc.setBackground(objectColor);
+			gc.fillRoundRectangle(this.x, this.y, this.width, this.height, 10, 10);
+			gc.drawRoundRectangle(this.x, this.y, this.width, this.height, 10, 10);
+			gc.drawString(this.className + " (id=" + id + ")", this.x + BORDER + PADDING, this.y + BORDER + PADDING);
+			gc.setBackground(oldBackground);
+		}
+	}
+
+
+	class Heap {
+		Color objectColor;
+		int nextX = 300 + 30;
+		int nextY = MachineStateCanvas.OUTER_MARGIN;
+		
+		HashMap<Long, JavaObject> objects = new HashMap<>();
+		
+		Heap(Color objectColor) {
+			this.objectColor = objectColor;
+		}
+		
+		JavaObject get(IJavaObject javaObject) throws DebugException {
+			long id = javaObject.getUniqueId();
+			JavaObject result = objects.get(id);
+			if (result == null) {
+				result = new JavaObject(nextX, nextY, id);
+				nextY += 100;
+				objects.put(id, result);
+			}
+			result.setState(javaObject);
+			return result;
+		}
+		
+		void paint(GC gc) {
+			for (JavaObject object : objects.values())
+				object.paint(gc);
 		}
 	}
 
@@ -349,10 +367,11 @@ class MachineStateCanvas extends Canvas {
 			}
 			if (stack != null) {
 				heap.paint(event.gc);
-				List<Arrow> arrows = new ArrayList<>();
-				stack.paint(event.gc, arrows);
+				arrows = new ArrayList<>();
+				stack.paint(event.gc);
 				for (Arrow arrow : arrows)
 					arrow.paint(event.gc);
+				arrows = null;
 			}
 		} else {
 			heap = null;
