@@ -26,13 +26,19 @@ import org.eclipse.jdt.debug.core.IJavaValue;
 import org.eclipse.jdt.debug.core.IJavaVariable;
 import org.eclipse.jface.resource.FontDescriptor;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.events.MouseEvent;
+import org.eclipse.swt.events.MouseListener;
+import org.eclipse.swt.events.MouseMoveListener;
 import org.eclipse.swt.events.PaintEvent;
 import org.eclipse.swt.graphics.Color;
+import org.eclipse.swt.graphics.Cursor;
 import org.eclipse.swt.graphics.Font;
 import org.eclipse.swt.graphics.GC;
 import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.graphics.Transform;
 import org.eclipse.ui.part.ViewPart;
+
+enum MouseEventType { MOVED, DOUBLE_CLICKED }; 
 
 class Element {
 	Element parent;
@@ -77,6 +83,20 @@ class Element {
 			gc.setTransform(transform);
 		}
 		transform.dispose();
+	}
+	
+	boolean handleMouseEvent(MouseEventType type, MouseEvent e) {
+		for (Element child : children) {
+			if (child.x <= e.x && e.x < child.x + child.width && child.y <= e.y && e.y < child.y + child.height) {
+				e.x -= child.x;
+				e.y -= child.y;
+				boolean result = child.handleMouseEvent(type, e);
+				e.x += child.x;
+				e.y += child.y;
+				return result;
+			}
+		}
+		return false;
 	}
 }
 
@@ -166,6 +186,7 @@ class MachineStateCanvas extends Canvas {
 	Color objectColor;
 	Element machine;
 	Heap heap;
+	VariablesTable stackVariablesTable = new VariablesTable();
 	CallStack stack;
 	List<Runnable> delayedInitializers;
 	List<Arrow> arrows; // Only meaningful during a paint()
@@ -200,7 +221,7 @@ class MachineStateCanvas extends Canvas {
 				} catch (DebugException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
-				}					
+				}
 			});
 		}
 		
@@ -235,6 +256,14 @@ class MachineStateCanvas extends Canvas {
 				arrows.add(new Arrow(from.x, from.y, (JavaObject)this.value));
 			}
 			gc.setBackground(oldBackground);
+		}
+		
+		int getDesiredNamesWidth() {
+			return nameExtent.x + INNER_PADDING;
+		}
+		
+		int getDesiredValuesWidth() {
+			return INNER_PADDING + valueExtent.x + INNER_PADDING;
 		}
 	}
 	
@@ -276,7 +305,6 @@ class MachineStateCanvas extends Canvas {
 			this.x = MachineStateCanvas.OUTER_MARGIN;
 			this.y = y;
 			y = 0;
-			this.width = BORDER + PADDING + stack.table.namesWidth + stack.table.valuesWidth + PADDING + BORDER;
 			if (frame instanceof IJavaStackFrame) {
 				IJavaStackFrame javaFrame = (IJavaStackFrame)frame;
 				String className = chopPackageName(javaFrame.getDeclaringTypeName());
@@ -288,6 +316,7 @@ class MachineStateCanvas extends Canvas {
 			if (1 <= lineNumber)
 				this.method += " on line " + lineNumber;
 			this.methodExtent = gc.stringExtent(this.method);
+			this.width = getDesiredWidth();
 			y += BORDER;
 			y += PADDING;
 			y += this.methodExtent.y;
@@ -330,11 +359,33 @@ class MachineStateCanvas extends Canvas {
 			//gc.setFont(oldFont);
 			super.paint(gc);
 		}
+		
+		int getDesiredWidth() {
+			return BORDER + PADDING + Math.max(methodExtent.x, stack.table.namesWidth + stack.table.valuesWidth) + PADDING + BORDER;
+		}
+		
+		@Override boolean handleMouseEvent(MouseEventType type, MouseEvent e) {
+			switch (type) {
+			case MOVED: {
+				boolean namesWidthHit = Math.abs(e.x - BORDER - PADDING - stack.table.namesWidth) < 5; 
+				setCursor(getDisplay().getSystemCursor(namesWidthHit ? SWT.CURSOR_SIZEE : SWT.CURSOR_ARROW));
+				break;
+			}
+			case DOUBLE_CLICKED: {
+				boolean namesWidthHit = Math.abs(e.x - BORDER - PADDING - stack.table.namesWidth) < 5; 
+				if (namesWidthHit) {
+					stack.updateNamesWidth();
+				}
+				break;
+			}
+			}
+			return false;
+		}
 	}
 	
 	class CallStack extends Element {
 
-		VariablesTable table = new VariablesTable();
+		VariablesTable table = stackVariablesTable;
 
 		CallStack(GC gc, Heap heap, IStackFrame[] frames) throws DebugException {
 			super(null);
@@ -348,6 +399,45 @@ class MachineStateCanvas extends Canvas {
 					y += stackFrame.height;
 				}
 			}
+		}
+
+		public void updateNamesWidth() {
+			int maxNameWidth = 0;
+			for (Element frame : children) {
+				for (Element e : frame.children) {
+					Variable v = (Variable)e;
+					maxNameWidth = Math.max(maxNameWidth, v.getDesiredNamesWidth());
+				}
+			}
+			table.namesWidth = maxNameWidth;
+			redraw();
+		}
+		
+		public void updateValuesWidth() {
+			int maxValueWidth = 0;
+			for (Element frame : children) {
+				for (Element e : frame.children) {
+					Variable v = (Variable)e;
+					maxValueWidth = Math.max(maxValueWidth, v.getDesiredValuesWidth());
+				}
+			}
+			table.valuesWidth = maxValueWidth;
+			redraw();
+		}
+		
+		void updateWidth() {
+			updateNamesWidth();
+			updateValuesWidth();
+			
+			int maxWidth = 0;
+			for (Element frame : children) {
+				maxWidth = Math.max(maxWidth, ((StackFrame)frame).getDesiredWidth());
+			}
+			
+			for (Element frame : children) {
+				((StackFrame)frame).width = maxWidth;
+			}
+			redraw();
 		}
 	}
 	
@@ -435,10 +525,45 @@ class MachineStateCanvas extends Canvas {
 			return result;
 		}
 	}
-
+	
 	MachineStateCanvas(Composite parent) {
 		super(parent, SWT.DOUBLE_BUFFERED);
 		addPaintListener(this::paint);
+		addMouseMoveListener(new MouseMoveListener() {
+
+			@Override
+			public void mouseMove(MouseEvent e) {
+				if (stack != null)
+					if (!stack.handleMouseEvent(MouseEventType.MOVED, e))
+						heap.handleMouseEvent(MouseEventType.MOVED, e);
+			}
+			
+		});
+		addMouseListener(new MouseListener() {
+
+			@Override
+			public void mouseDoubleClick(MouseEvent e) {
+				if (stack != null)
+					if (!stack.handleMouseEvent(MouseEventType.DOUBLE_CLICKED, e))
+						heap.handleMouseEvent(MouseEventType.DOUBLE_CLICKED, e);
+			}
+
+			@Override
+			public void mouseDown(MouseEvent e) {
+//				if (stack != null)
+//					if (!stack.handleMouseEvent(e))
+//						heap.handleMouseEvent(e);
+				
+			}
+
+			@Override
+			public void mouseUp(MouseEvent e) {
+//				if (stack != null)
+//					if (!stack.handleMouseEvent(e))
+//						heap.handleMouseEvent(e);
+			}
+			
+		});
 		FontDescriptor boldDescriptor = FontDescriptor.createFrom(getFont()).setStyle(SWT.BOLD);
 		boldFont = boldDescriptor.createFont(getDisplay());
 		objectColor = new Color(getDisplay(), 255, 204, 203);
@@ -470,6 +595,7 @@ class MachineStateCanvas extends Canvas {
 								r.run();
 						}
 						delayedInitializers = null;
+						stack.updateWidth();
 					}
 				}
 			} catch (DebugException e) {
