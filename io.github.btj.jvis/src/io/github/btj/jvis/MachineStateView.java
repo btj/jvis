@@ -35,6 +35,10 @@ class Element {
 }
 
 class JavaObject extends Element {
+	
+	static final int BORDER = 2;
+	static final int PADDING = 3;
+	
 	long id;
 	String className;
 	
@@ -55,7 +59,7 @@ class JavaObject extends Element {
 		gc.setBackground(objectColor);
 		gc.fillRoundRectangle(this.x, this.y, this.width, this.height, 10, 10);
 		gc.drawRoundRectangle(this.x, this.y, this.width, this.height, 10, 10);
-		gc.drawString(this.className + " (id=" + id + ")", this.x + 5, this.y + 5);
+		gc.drawString(this.className + " (id=" + id + ")", this.x + BORDER + PADDING, this.y + BORDER + PADDING);
 		gc.setBackground(oldBackground);
 	}
 }
@@ -202,7 +206,6 @@ class StackFrame extends Element {
 	final static int WIDTH = 300;
 	final static int PADDING = 3;
 	
-	Font methodFont;
 	String method;
 	Point methodExtent;
 	Variable[] locals;
@@ -217,8 +220,7 @@ class StackFrame extends Element {
 			return fullyQualifiedName;
 	}
 	
-	StackFrame(GC gc, Heap heap, int y, IStackFrame frame, Font methodFont, boolean active) throws DebugException {
-		this.methodFont = methodFont;
+	StackFrame(GC gc, Heap heap, int y, IStackFrame frame, boolean active) throws DebugException {
 		this.active = active;
 		this.x = MachineStateCanvas.OUTER_MARGIN;
 		this.y = y;
@@ -287,14 +289,34 @@ class StackFrame extends Element {
 	}
 }
 
-class MachineStateCanvas extends Canvas {
+class CallStack {
+	StackFrame[] stackFrames;
+
+	CallStack(GC gc, Heap heap, IStackFrame[] frames) throws DebugException {
+		stackFrames = new StackFrame[frames.length];
+		int y = MachineStateCanvas.OUTER_MARGIN;
+		for (int i = 0; i < frames.length; i++) {
+			IStackFrame frame = frames[frames.length - i - 1];
+			boolean active = i == frames.length - 1;
+			StackFrame stackFrame = stackFrames[i] = new StackFrame(gc, heap, y, frame, active);
+			y += stackFrame.height;
+		}
+	}
 	
+	void paint(GC gc, List<Arrow> arrows) {
+		for (StackFrame frame : stackFrames)
+			frame.paint(gc, arrows);
+	}
+}
+
+class MachineStateCanvas extends Canvas {
+
 	static int OUTER_MARGIN = 4;
 	
 	Font boldFont;
 	Color objectColor;
 	Heap heap;
-	StackFrame[] stackFrames;
+	CallStack stack;
 
 	MachineStateCanvas(Composite parent) {
 		super(parent, SWT.DOUBLE_BUFFERED);
@@ -307,17 +329,6 @@ class MachineStateCanvas extends Canvas {
 			objectColor.dispose();
 		});
 	}
-	
-	void layoutStackFrames(GC gc, IStackFrame[] frames) throws DebugException {
-		stackFrames = new StackFrame[frames.length];
-		int y = OUTER_MARGIN;
-		for (int i = 0; i < frames.length; i++) {
-			IStackFrame frame = frames[frames.length - i - 1];
-			boolean active = i == frames.length - 1;
-			StackFrame stackFrame = stackFrames[i] = new StackFrame(gc, heap, y, frame, active ? boldFont : getFont(), active);
-			y += stackFrame.height;
-		}
-	}
 
 	void paint(PaintEvent event) {
 		IDebugTarget[] targets = DebugPlugin.getDefault().getLaunchManager().getDebugTargets();
@@ -329,23 +340,22 @@ class MachineStateCanvas extends Canvas {
 					if (frames.length > 0) {
 						if (heap == null)
 							heap = new Heap(objectColor);
-						layoutStackFrames(event.gc, frames);
+						stack = new CallStack(event.gc, heap, frames);
 					}
 				}
 			} catch (DebugException e) {
 				throw new RuntimeException(e);
 			}
-			if (stackFrames != null) {
+			if (stack != null) {
 				heap.paint(event.gc);
 				List<Arrow> arrows = new ArrayList<>();
-				for (StackFrame frame : stackFrames)
-					frame.paint(event.gc, arrows);
+				stack.paint(event.gc, arrows);
 				for (Arrow arrow : arrows)
 					arrow.paint(event.gc);
 			}
 		} else {
 			heap = null;
-			stackFrames = null;
+			stack = null;
 			event.gc.drawString("No program running.", 1, 1);
 		}
 	}
