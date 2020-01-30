@@ -51,7 +51,7 @@ class JavaObject extends Element {
 	}
 	
 	void setState(IJavaObject javaObject) throws DebugException {
-		className = StackFrame.chopPackageName(javaObject.getReferenceTypeName());
+		className = MachineStateCanvas.chopPackageName(javaObject.getReferenceTypeName());
 	}
 	
 	void paint(GC gc, Color objectColor) {
@@ -66,7 +66,7 @@ class JavaObject extends Element {
 
 class Heap {
 	Color objectColor;
-	int nextX = StackFrame.WIDTH + 30;
+	int nextX = 300 + 30;
 	int nextY = MachineStateCanvas.OUTER_MARGIN;
 	
 	HashMap<Long, JavaObject> objects = new HashMap<>();
@@ -160,19 +160,17 @@ class Variable extends Element {
 	final static int PADDING = 1;
 	final static int INNER_PADDING = 3;
 	
+	VariablesTable table;
 	String name;
 	Point nameExtent;
 	Object value;
 	Point valueExtent;
-	int nameWidth;
-	int valueWidth;
 
-	Variable(GC gc, Heap heap, int x, int y, int nameWidth, int valueWidth, IVariable variable) throws DebugException {
+	Variable(GC gc, Heap heap, int x, int y, VariablesTable table, IVariable variable) throws DebugException {
 		this.x = x;
 		this.y = y;
-		this.nameWidth = nameWidth;
-		this.valueWidth = valueWidth;
-		this.width = nameWidth + valueWidth;
+		this.table = table;
+		this.width = table.namesWidth + table.valuesWidth;
 		this.name = variable.getName();
 		this.nameExtent = gc.stringExtent(this.name);
 		IValue value = variable.getValue();
@@ -186,32 +184,27 @@ class Variable extends Element {
 	}
 	
 	void paint(GC gc, List<Arrow> arrows) {
-		gc.drawString(this.name, this.x + this.nameWidth - this.nameExtent.x - INNER_PADDING, this.y + PADDING);
+		gc.drawString(this.name, this.x + this.table.namesWidth - this.nameExtent.x - INNER_PADDING, this.y + PADDING);
 		Color oldBackground = gc.getBackground();
 		gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_WHITE));
-		gc.fillRectangle(this.x + this.nameWidth + 2, this.y, this.valueWidth - 2, this.height);
+		gc.fillRectangle(this.x + this.table.namesWidth + 2, this.y, this.table.valuesWidth - 2, this.height);
 		if (this.value instanceof String) {
 			String valueString = (String)this.value;
-			gc.drawString(valueString, this.x + this.nameWidth + INNER_PADDING, this.y + PADDING);
+			gc.drawString(valueString, this.x + this.table.namesWidth + INNER_PADDING, this.y + PADDING);
 		} else {
-			arrows.add(new Arrow(this.x + this.nameWidth + this.valueWidth / 2, this.y + this.height / 2, (JavaObject)this.value));
+			arrows.add(new Arrow(this.x + this.table.namesWidth + this.table.valuesWidth / 2, this.y + this.height / 2, (JavaObject)this.value));
 		}
 		gc.setBackground(oldBackground);
 	}
 }
 
-class StackFrame extends Element {
-	
-	final static int BORDER = 2;
-	final static int WIDTH = 300;
-	final static int PADDING = 3;
-	
-	String method;
-	Point methodExtent;
-	Variable[] locals;
-	boolean active;
-	Variable returnValue;
-	
+class VariablesTable {
+	int namesWidth = 150;
+	int valuesWidth = 150;
+}
+
+class MachineStateCanvas extends Canvas {
+
 	static String chopPackageName(String fullyQualifiedName) {
 		int i = fullyQualifiedName.lastIndexOf('.');
 		if (i >= 0)
@@ -220,103 +213,111 @@ class StackFrame extends Element {
 			return fullyQualifiedName;
 	}
 	
-	StackFrame(GC gc, Heap heap, int y, IStackFrame frame, boolean active) throws DebugException {
-		this.active = active;
-		this.x = MachineStateCanvas.OUTER_MARGIN;
-		this.y = y;
-		this.width = WIDTH;
-		if (frame instanceof IJavaStackFrame) {
-			IJavaStackFrame javaFrame = (IJavaStackFrame)frame;
-			String className = chopPackageName(javaFrame.getDeclaringTypeName());
-			String signature = String.join(", ", javaFrame.getArgumentTypeNames().stream().map(StackFrame::chopPackageName).collect(Collectors.toList()));
-			this.method = className + "::" + javaFrame.getMethodName() + "(" + signature + ")";
-		} else
-			this.method = frame.getName();
-		int lineNumber = frame.getLineNumber();
-		if (1 <= lineNumber)
-			this.method += " on line " + lineNumber;
-		this.methodExtent = gc.stringExtent(this.method);
-		y += BORDER;
-		y += PADDING;
-		y += this.methodExtent.y;
-		y += PADDING;
-		IVariable[] variables = frame.getVariables();
-		IVariable returnValue = null;
-		if (active && variables.length > 0) {
-			// The first local in the active stack frame seems to be the return value from the most recent call
-			returnValue = variables[0];
-			int length = variables.length;
-			System.arraycopy(variables, 1, variables = new IVariable[length - 1], 0, length - 1);
-		}
-		this.locals = new Variable[variables.length];
-		int localsX = this.x + BORDER + PADDING;
-		int localsWidth = this.width - 2 * (BORDER + PADDING);
-		int namesWidth = localsWidth / 2;
-		int valuesWidth = localsWidth - namesWidth;
-		for (int i = 0; i < variables.length; i++) {
-			IVariable variable = variables[i];
-			Variable local = locals[i] = new Variable(gc, heap, localsX, y, namesWidth, valuesWidth, variable);
-			y += local.height + PADDING;
-		}
-		y += BORDER;
-		this.height = y - this.y;
-		if (returnValue != null && !returnValue.getName().equals("no method return value") && !returnValue.getReferenceTypeName().equals("void")) {
-			y += BORDER + PADDING;
-			this.returnValue = new Variable(gc, heap, localsX, y, namesWidth, valuesWidth, returnValue);
-		}
-	}
-	
-	void paint(GC gc, List<Arrow> arrows) {
-		gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GREEN));  //active ? SWT.COLOR_YELLOW : SWT.COLOR_GREEN));
-		gc.fillRectangle(this.x, this.y, this.width, this.height);
-		int oldWidth = gc.getLineWidth();
-		if (active)
-			gc.setLineWidth(2);
-		gc.drawRectangle(this.x, this.y, this.width, this.height);
-		gc.setLineWidth(oldWidth);
-		//Font oldFont = gc.getFont();
-		//gc.setFont(methodFont);
-		gc.drawString(this.method, this.x + (this.width - this.methodExtent.x) / 2 , this.y + BORDER + PADDING);
-		//gc.setFont(oldFont);
-		for (Variable v : this.locals)
-			v.paint(gc, arrows);
-		if (this.returnValue != null) {
-			gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GRAY));
-			gc.fillRectangle(this.x, this.y + this.height, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
-			gc.drawRectangle(this.x, this.y + this.height, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
-			returnValue.paint(gc, arrows);
-		}
-	}
-}
-
-class CallStack {
-	StackFrame[] stackFrames;
-
-	CallStack(GC gc, Heap heap, IStackFrame[] frames) throws DebugException {
-		stackFrames = new StackFrame[frames.length];
-		int y = MachineStateCanvas.OUTER_MARGIN;
-		for (int i = 0; i < frames.length; i++) {
-			IStackFrame frame = frames[frames.length - i - 1];
-			boolean active = i == frames.length - 1;
-			StackFrame stackFrame = stackFrames[i] = new StackFrame(gc, heap, y, frame, active);
-			y += stackFrame.height;
-		}
-	}
-	
-	void paint(GC gc, List<Arrow> arrows) {
-		for (StackFrame frame : stackFrames)
-			frame.paint(gc, arrows);
-	}
-}
-
-class MachineStateCanvas extends Canvas {
-
 	static int OUTER_MARGIN = 4;
 	
 	Font boldFont;
 	Color objectColor;
 	Heap heap;
 	CallStack stack;
+	
+	class StackFrame extends Element {
+		
+		final static int BORDER = 2;
+		final static int PADDING = 3;
+		
+		String method;
+		Point methodExtent;
+		Variable[] locals;
+		boolean active;
+		Variable returnValue;
+		
+		StackFrame(GC gc, Heap heap, int y, IStackFrame frame, boolean active) throws DebugException {
+			this.active = active;
+			this.x = MachineStateCanvas.OUTER_MARGIN;
+			this.y = y;
+			this.width = BORDER + PADDING + stack.namesWidth + stack.valuesWidth + PADDING + BORDER;
+			if (frame instanceof IJavaStackFrame) {
+				IJavaStackFrame javaFrame = (IJavaStackFrame)frame;
+				String className = chopPackageName(javaFrame.getDeclaringTypeName());
+				String signature = String.join(", ", javaFrame.getArgumentTypeNames().stream().map(MachineStateCanvas::chopPackageName).collect(Collectors.toList()));
+				this.method = className + "::" + javaFrame.getMethodName() + "(" + signature + ")";
+			} else
+				this.method = frame.getName();
+			int lineNumber = frame.getLineNumber();
+			if (1 <= lineNumber)
+				this.method += " on line " + lineNumber;
+			this.methodExtent = gc.stringExtent(this.method);
+			y += BORDER;
+			y += PADDING;
+			y += this.methodExtent.y;
+			y += PADDING;
+			IVariable[] variables = frame.getVariables();
+			IVariable returnValue = null;
+			if (active && variables.length > 0) {
+				// The first local in the active stack frame seems to be the return value from the most recent call
+				returnValue = variables[0];
+				int length = variables.length;
+				System.arraycopy(variables, 1, variables = new IVariable[length - 1], 0, length - 1);
+			}
+			this.locals = new Variable[variables.length];
+			int localsX = this.x + BORDER + PADDING;
+			for (int i = 0; i < variables.length; i++) {
+				IVariable variable = variables[i];
+				Variable local = locals[i] = new Variable(gc, heap, localsX, y, stack, variable);
+				y += local.height + PADDING;
+			}
+			y += BORDER;
+			this.height = y - this.y;
+			if (returnValue != null && !returnValue.getName().equals("no method return value") && !returnValue.getReferenceTypeName().equals("void")) {
+				y += BORDER + PADDING;
+				this.returnValue = new Variable(gc, heap, localsX, y, stack, returnValue);
+			}
+		}
+		
+		void paint(GC gc, List<Arrow> arrows) {
+			gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GREEN));  //active ? SWT.COLOR_YELLOW : SWT.COLOR_GREEN));
+			gc.fillRectangle(this.x, this.y, this.width, this.height);
+			int oldWidth = gc.getLineWidth();
+			if (active)
+				gc.setLineWidth(2);
+			gc.drawRectangle(this.x, this.y, this.width, this.height);
+			gc.setLineWidth(oldWidth);
+			//Font oldFont = gc.getFont();
+			//gc.setFont(methodFont);
+			gc.drawString(this.method, this.x + (this.width - this.methodExtent.x) / 2 , this.y + BORDER + PADDING);
+			//gc.setFont(oldFont);
+			for (Variable v : this.locals)
+				v.paint(gc, arrows);
+			if (this.returnValue != null) {
+				gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_GRAY));
+				gc.fillRectangle(this.x, this.y + this.height, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
+				gc.drawRectangle(this.x, this.y + this.height, this.width, this.returnValue.height + 2 * PADDING + 2 * BORDER);
+				returnValue.paint(gc, arrows);
+			}
+		}
+	}
+	
+	class CallStack extends VariablesTable {
+		
+		StackFrame[] stackFrames;
+
+		CallStack(GC gc, Heap heap, IStackFrame[] frames) throws DebugException {
+			stack = this;
+			stackFrames = new StackFrame[frames.length];
+			int y = MachineStateCanvas.OUTER_MARGIN;
+			for (int i = 0; i < frames.length; i++) {
+				IStackFrame frame = frames[frames.length - i - 1];
+				boolean active = i == frames.length - 1;
+				StackFrame stackFrame = stackFrames[i] = new StackFrame(gc, heap, y, frame, active);
+				y += stackFrame.height;
+			}
+		}
+		
+		void paint(GC gc, List<Arrow> arrows) {
+			for (StackFrame frame : stackFrames)
+				frame.paint(gc, arrows);
+		}
+	}
 
 	MachineStateCanvas(Composite parent) {
 		super(parent, SWT.DOUBLE_BUFFERED);
@@ -340,7 +341,7 @@ class MachineStateCanvas extends Canvas {
 					if (frames.length > 0) {
 						if (heap == null)
 							heap = new Heap(objectColor);
-						stack = new CallStack(event.gc, heap, frames);
+						new CallStack(event.gc, heap, frames);
 					}
 				}
 			} catch (DebugException e) {
