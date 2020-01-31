@@ -9,6 +9,7 @@ import org.eclipse.swt.widgets.Listener;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -46,14 +47,47 @@ enum MouseEventType { DOWN, MOVED, UP, DOUBLE_CLICKED };
 
 class Element {
 	Element parent;
-	ArrayList<Element> children = new ArrayList<>();
+	final Element firstChild; // Points to a dummy element
+	Element previousSibling;
+	Element nextSibling;
 	int x, y, width, height;
 	Element mouseChild;
 	boolean mouseInside;
 	
+	final Iterable<Element> children = new Iterable<Element>() {
+
+		@Override
+		public Iterator<Element> iterator() {
+			return new Iterator<Element>() {
+				Element child = firstChild.nextSibling;
+
+				@Override
+				public boolean hasNext() {
+					return child != firstChild;
+				}
+
+				@Override
+				public Element next() {
+					Element child = this.child;
+					this.child = child.nextSibling;
+					return child;
+				}
+				
+			};
+		}
+		
+	};
+	
+	private Element() {
+		firstChild = null;
+		nextSibling = this;
+		previousSibling = this;
+	}
+	
 	Element(Element parent) {
 		if (parent != null)
 			parent.add(this);
+		firstChild = new Element();
 	}
 	
 	void mapPoint(Point point, Element ancestor) {
@@ -70,20 +104,28 @@ class Element {
 		if (mouseChild == child)
 			setMouseChild(null);
 		child.parent = null;
-		children.remove(child);
+		
+		child.nextSibling.previousSibling = child.previousSibling;
+		child.previousSibling.nextSibling = child.nextSibling;
+		child.nextSibling = child.previousSibling = null;
 	}
 	
 	void add(Element child) {
 		if (child.parent != null)
 			child.parent.remove(child);
-		children.add(child);
 		child.parent = this;
+		
+		child.nextSibling = firstChild.nextSibling;
+		child.previousSibling = firstChild;
+		child.nextSibling.previousSibling = child;
+		child.previousSibling.nextSibling = child;
 	}
 	
 	void paint(GC gc) {
 		Transform transform = new Transform(gc.getDevice());
 		gc.getTransform(transform);
-		for (Element child : children) {
+		// Paint in reverse order, so that the first child is on top
+		for (Element child = firstChild.previousSibling; child != firstChild; child = child.previousSibling) {
 			transform.translate(child.x, child.y);
 			gc.setTransform(transform);
 			child.paint(gc);
@@ -114,6 +156,15 @@ class Element {
 				mouseChild.mouseExitedInternal();
 			if (child != null) {
 				child.mouseInside = true;
+				// Move to front of z-order
+				if (child.previousSibling != firstChild) {
+					child.nextSibling.previousSibling = child.previousSibling;
+					child.previousSibling.nextSibling = child.nextSibling;
+					child.nextSibling = firstChild.nextSibling;
+					child.previousSibling = firstChild;
+					child.previousSibling.nextSibling = child;
+					child.nextSibling.previousSibling = child;
+				}
 				child.mouseEntered();
 			}
 			mouseChild = child;
