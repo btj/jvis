@@ -85,16 +85,28 @@ class Element {
 		transform.dispose();
 	}
 	
+	int getCursor(int x, int y) {
+		return SWT.CURSOR_ARROW;
+	}
+	
 	boolean handleMouseEvent(MouseEventType type, MouseEvent e) {
+		//System.out.println("Entering handleMouseEvent(" + type + ", (" + e.x + ", " + e.y + "))");
 		for (Element child : children) {
 			if (child.x <= e.x && e.x < child.x + child.width && child.y <= e.y && e.y < child.y + child.height) {
 				e.x -= child.x;
 				e.y -= child.y;
+				//System.out.println("Entering child at (" + child.x + ", " + child.y + "), extent (" + child.width + ", " + child.height + ")");
 				boolean result = child.handleMouseEvent(type, e);
+				//System.out.println("Leaving child");
 				e.x += child.x;
 				e.y += child.y;
 				return result;
-			}
+			} //else
+				//System.out.println("Skipping child at (" + child.x + ", " + child.y + "), extent (" + child.width + ", " + child.height + ")");
+		}
+		if (type == MouseEventType.MOVED) {
+			((Canvas)e.widget).setCursor(((Canvas)e.widget).getDisplay().getSystemCursor(getCursor(e.x, e.y)));
+			return true;
 		}
 		return false;
 	}
@@ -165,9 +177,12 @@ class Arrow {
 	}
 }
 
-class VariablesTable {
+abstract class VariablesTable {
 	int namesWidth = 150;
 	int valuesWidth = 150;
+	
+	abstract void updateNamesWidth();
+	abstract void updateValuesWidth();
 }
 
 class MachineStateCanvas extends Canvas {
@@ -186,7 +201,21 @@ class MachineStateCanvas extends Canvas {
 	Color objectColor;
 	Element machine;
 	Heap heap;
-	VariablesTable stackVariablesTable = new VariablesTable();
+	VariablesTable stackVariablesTable = new VariablesTable() {
+
+		@Override
+		void updateNamesWidth() {
+			stack.updateNamesWidth();
+			
+		}
+
+		@Override
+		void updateValuesWidth() {
+			stack.updateValuesWidth();
+		}
+		
+	};
+	
 	CallStack stack;
 	List<Runnable> delayedInitializers;
 	List<Arrow> arrows; // Only meaningful during a paint()
@@ -265,6 +294,30 @@ class MachineStateCanvas extends Canvas {
 		int getDesiredValuesWidth() {
 			return INNER_PADDING + valueExtent.x + INNER_PADDING;
 		}
+		
+		int getCursor(int x, int y) {
+			if (Math.abs(x - table.namesWidth) < 5)
+				return SWT.CURSOR_SIZEE;
+			else if (Math.abs(x - table.namesWidth - table.valuesWidth) < 10)
+				return SWT.CURSOR_SIZEE;
+			else
+				return SWT.CURSOR_ARROW;
+		}
+		
+		@Override boolean handleMouseEvent(MouseEventType type, MouseEvent e) {
+			switch (type) {
+			case DOUBLE_CLICKED: {
+				if (Math.abs(e.x - table.namesWidth) < 5)
+					table.updateNamesWidth();
+				else if (Math.abs(e.x - table.namesWidth - table.valuesWidth) < 10)
+					table.updateValuesWidth();
+				return true;
+			}
+			default: break;
+			}
+			return super.handleMouseEvent(type, e);
+		}
+
 	}
 	
 	class ReturnFrame extends Element {
@@ -290,6 +343,10 @@ class MachineStateCanvas extends Canvas {
 		
 	}
 	
+	int getStackFrameWidth() {
+		return StackFrame.BORDER + StackFrame.PADDING + stack.table.namesWidth + stack.table.valuesWidth + StackFrame.PADDING + StackFrame.BORDER;
+	}
+	
 	class StackFrame extends Element {
 		
 		final static int BORDER = 2;
@@ -304,6 +361,7 @@ class MachineStateCanvas extends Canvas {
 			this.active = active;
 			this.x = MachineStateCanvas.OUTER_MARGIN;
 			this.y = y;
+			this.width = getStackFrameWidth();
 			y = 0;
 			if (frame instanceof IJavaStackFrame) {
 				IJavaStackFrame javaFrame = (IJavaStackFrame)frame;
@@ -316,7 +374,6 @@ class MachineStateCanvas extends Canvas {
 			if (1 <= lineNumber)
 				this.method += " on line " + lineNumber;
 			this.methodExtent = gc.stringExtent(this.method);
-			this.width = getDesiredWidth();
 			y += BORDER;
 			y += PADDING;
 			y += this.methodExtent.y;
@@ -360,26 +417,18 @@ class MachineStateCanvas extends Canvas {
 			super.paint(gc);
 		}
 		
-		int getDesiredWidth() {
-			return BORDER + PADDING + Math.max(methodExtent.x, stack.table.namesWidth + stack.table.valuesWidth) + PADDING + BORDER;
+		int getDesiredNamesWidth() {
+			int width = Math.max(20, methodExtent.x - stack.table.valuesWidth);
+			for (Element e : children)
+				width = Math.max(width, ((Variable)e).getDesiredNamesWidth());
+			return width;
 		}
 		
-		@Override boolean handleMouseEvent(MouseEventType type, MouseEvent e) {
-			switch (type) {
-			case MOVED: {
-				boolean namesWidthHit = Math.abs(e.x - BORDER - PADDING - stack.table.namesWidth) < 5; 
-				setCursor(getDisplay().getSystemCursor(namesWidthHit ? SWT.CURSOR_SIZEE : SWT.CURSOR_ARROW));
-				break;
-			}
-			case DOUBLE_CLICKED: {
-				boolean namesWidthHit = Math.abs(e.x - BORDER - PADDING - stack.table.namesWidth) < 5; 
-				if (namesWidthHit) {
-					stack.updateNamesWidth();
-				}
-				break;
-			}
-			}
-			return false;
+		int getDesiredValuesWidth() {
+			int width = Math.max(20, methodExtent.x - stack.table.namesWidth);
+			for (Element e : children)
+				width = Math.max(width, ((Variable)e).getDesiredValuesWidth());
+			return width;
 		}
 	}
 	
@@ -388,7 +437,7 @@ class MachineStateCanvas extends Canvas {
 		VariablesTable table = stackVariablesTable;
 
 		CallStack(GC gc, Heap heap, IStackFrame[] frames) throws DebugException {
-			super(null);
+			super(machine);
 			stack = this;
 			int y = MachineStateCanvas.OUTER_MARGIN;
 			for (int i = 0; i < frames.length; i++) {
@@ -399,44 +448,23 @@ class MachineStateCanvas extends Canvas {
 					y += stackFrame.height;
 				}
 			}
+			width = OUTER_MARGIN + getStackFrameWidth() + OUTER_MARGIN;
+			height = 10000;
 		}
 
 		public void updateNamesWidth() {
-			int maxNameWidth = 0;
-			for (Element frame : children) {
-				for (Element e : frame.children) {
-					Variable v = (Variable)e;
-					maxNameWidth = Math.max(maxNameWidth, v.getDesiredNamesWidth());
-				}
-			}
-			table.namesWidth = maxNameWidth;
+			int maxNamesWidth = 20;
+			for (Element frame : children)
+				maxNamesWidth = Math.max(maxNamesWidth, ((StackFrame)frame).getDesiredNamesWidth());
+			table.namesWidth = maxNamesWidth;
 			redraw();
 		}
 		
 		public void updateValuesWidth() {
-			int maxValueWidth = 0;
-			for (Element frame : children) {
-				for (Element e : frame.children) {
-					Variable v = (Variable)e;
-					maxValueWidth = Math.max(maxValueWidth, v.getDesiredValuesWidth());
-				}
-			}
-			table.valuesWidth = maxValueWidth;
-			redraw();
-		}
-		
-		void updateWidth() {
-			updateNamesWidth();
-			updateValuesWidth();
-			
-			int maxWidth = 0;
-			for (Element frame : children) {
-				maxWidth = Math.max(maxWidth, ((StackFrame)frame).getDesiredWidth());
-			}
-			
-			for (Element frame : children) {
-				((StackFrame)frame).width = maxWidth;
-			}
+			int maxValuesWidth = 20;
+			for (Element frame : children)
+				maxValuesWidth = Math.max(maxValuesWidth, ((StackFrame)frame).getDesiredValuesWidth());
+			table.valuesWidth = maxValuesWidth;
 			redraw();
 		}
 	}
@@ -450,15 +478,39 @@ class MachineStateCanvas extends Canvas {
 		String className;
 		String title;
 		Point titleExtent;
-		VariablesTable table = new VariablesTable();
+		VariablesTable table = new VariablesTable() {
+
+			@Override
+			void updateNamesWidth() {
+				int namesWidth = Math.max(20, titleExtent.x - valuesWidth);
+				for (Variable v : variables)
+					namesWidth = Math.max(namesWidth, v.getDesiredNamesWidth());
+				this.namesWidth = namesWidth;
+				redraw();
+			}
+
+			@Override
+			void updateValuesWidth() {
+				int valuesWidth = Math.max(20, titleExtent.x - namesWidth);
+				for (Variable v : variables)
+					valuesWidth = Math.max(valuesWidth, v.getDesiredValuesWidth());
+				this.valuesWidth = valuesWidth;
+				redraw();
+			}
+			
+		};
 		Variable[] variables;
+		
+		int getWidth() {
+			return BORDER + PADDING + table.namesWidth + table.valuesWidth + PADDING + BORDER;
+		}
 		
 		JavaObject(int x, int y, long id) {
 			super(heap);
 			this.x = x;
 	        this.y = y;
 	        this.id = id;
-	        this.width = BORDER + PADDING + table.namesWidth + table.valuesWidth + PADDING + BORDER;
+	        this.width = getWidth();
 	        this.height = 50;
 		}
 		
@@ -483,6 +535,7 @@ class MachineStateCanvas extends Canvas {
 			}
 			y += BORDER;
 			this.height = y;
+			this.width = getWidth(); 
 		}
 		
 		@Override
@@ -510,6 +563,8 @@ class MachineStateCanvas extends Canvas {
 		Heap() {
 			super(machine);
 			this.x = 300;
+			this.width = 10000;
+			this.height = 10000;
 		}
 		
 		JavaObject get(GC gc, IJavaObject javaObject) throws DebugException {
@@ -534,8 +589,7 @@ class MachineStateCanvas extends Canvas {
 			@Override
 			public void mouseMove(MouseEvent e) {
 				if (stack != null)
-					if (!stack.handleMouseEvent(MouseEventType.MOVED, e))
-						heap.handleMouseEvent(MouseEventType.MOVED, e);
+					machine.handleMouseEvent(MouseEventType.MOVED, e);
 			}
 			
 		});
@@ -544,8 +598,7 @@ class MachineStateCanvas extends Canvas {
 			@Override
 			public void mouseDoubleClick(MouseEvent e) {
 				if (stack != null)
-					if (!stack.handleMouseEvent(MouseEventType.DOUBLE_CLICKED, e))
-						heap.handleMouseEvent(MouseEventType.DOUBLE_CLICKED, e);
+					machine.handleMouseEvent(MouseEventType.DOUBLE_CLICKED, e);
 			}
 
 			@Override
@@ -587,7 +640,10 @@ class MachineStateCanvas extends Canvas {
 							heap = new Heap();
 						}
 						delayedInitializers = new ArrayList<>();
+						if (stack != null)
+							machine.remove(stack);
 						new CallStack(gc, heap, frames);
+						heap.x = stack.width;
 						while (!delayedInitializers.isEmpty()) {
 							List<Runnable> oldDelayedInitializers = delayedInitializers;
 							delayedInitializers = new ArrayList<>();
@@ -595,7 +651,6 @@ class MachineStateCanvas extends Canvas {
 								r.run();
 						}
 						delayedInitializers = null;
-						stack.updateWidth();
 					}
 				}
 			} catch (DebugException e) {
@@ -604,7 +659,6 @@ class MachineStateCanvas extends Canvas {
 			if (stack != null) {
 				arrows = new ArrayList<>();
 				machine.paint(gc);
-				stack.paint(gc);
 				for (Arrow arrow : arrows)
 					arrow.paint(gc);
 				arrows = null;
