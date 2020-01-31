@@ -276,6 +276,7 @@ class MachineStateCanvas extends Canvas {
 				this.value = this.valueString = '"' + (String)this.value + '"' + " (id=" + ((IJavaObject)javaValue).getUniqueId() + ")";
 				return;
 			}
+			this.valueString = chopPackageName(javaType.getName()) + " (id=" + ((IJavaObject)value).getUniqueId() + ")";
 			delayedInitializers.add(() -> {
 				try {
 					this.value = heap.get(gc, (IJavaObject)value);
