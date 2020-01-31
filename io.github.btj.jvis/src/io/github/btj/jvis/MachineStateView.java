@@ -3,6 +3,8 @@ package io.github.btj.jvis;
 import org.eclipse.swt.widgets.Canvas;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.swt.widgets.Event;
+import org.eclipse.swt.widgets.Listener;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -40,7 +42,7 @@ import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.graphics.Transform;
 import org.eclipse.ui.part.ViewPart;
 
-enum MouseEventType { MOVED, UP, DOUBLE_CLICKED }; 
+enum MouseEventType { DOWN, MOVED, UP, DOUBLE_CLICKED }; 
 
 class Element {
 	Element parent;
@@ -584,6 +586,41 @@ class MachineStateCanvas extends Canvas {
     	
     	@Override
     	void mouseExited() { redraw(); }
+    	
+    	@Override
+    	boolean handleMouseEvent(MouseEventType type, MouseEvent e) {
+    		if (type == MouseEventType.DOWN) {
+    			int origX = this.x;
+    			int origY = this.y;
+        		class DragListener implements Listener {
+        			
+        			boolean isDragging;
+
+    				@Override
+    				public void handleEvent(Event event) {
+    					switch (event.type) {
+    					case SWT.MouseMove:
+    						isDragging = true;
+    						JavaObject.this.x = origX + event.x - e.x;
+    						JavaObject.this.y = origY + event.y - e.y;
+    						redraw();
+    						event.type = SWT.None;
+    						break;
+    					case SWT.MouseUp:
+							getDisplay().removeFilter(SWT.MouseUp, this);
+							getDisplay().removeFilter(SWT.MouseMove, this);
+    						if (isDragging)
+    							event.type = SWT.None;
+    					}
+    				}
+        			
+        		}
+    			DragListener listener = new DragListener(); 
+    			getDisplay().addFilter(SWT.MouseUp, listener);
+    			getDisplay().addFilter(SWT.MouseMove, listener);
+    		}
+    		return super.handleMouseEvent(type, e);
+    	}
 		
 		void setState(GC gc, IJavaObject javaObject) throws DebugException {
 			className = MachineStateCanvas.chopPackageName(javaObject.getReferenceTypeName());
@@ -595,6 +632,10 @@ class MachineStateCanvas extends Canvas {
 			y += titleExtent.y;
 			y += PADDING;
 			IVariable[] variables = javaObject.getVariables();
+			if (this.variables != null) {
+				for (int i = this.variables.length - 1; 0 <= i; i--)
+					remove(this.variables[i]);
+			}
 			this.variables = new Variable[variables.length];
 			int localsX = BORDER + PADDING;
 			for (int i = 0; i < variables.length; i++) {
@@ -675,10 +716,8 @@ class MachineStateCanvas extends Canvas {
 
 			@Override
 			public void mouseDown(MouseEvent e) {
-//				if (stack != null)
-//					if (!stack.handleMouseEvent(e))
-//						heap.handleMouseEvent(e);
-				
+				if (stack != null)
+					machine.handleMouseEvent(MouseEventType.DOWN, e);
 			}
 
 			@Override
