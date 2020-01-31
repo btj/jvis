@@ -5,6 +5,7 @@ import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -21,6 +22,7 @@ import org.eclipse.jdt.debug.core.IJavaArray;
 import org.eclipse.jdt.debug.core.IJavaObject;
 import org.eclipse.jdt.debug.core.IJavaReferenceType;
 import org.eclipse.jdt.debug.core.IJavaStackFrame;
+import org.eclipse.jdt.debug.core.IJavaThread;
 import org.eclipse.jdt.debug.core.IJavaType;
 import org.eclipse.jdt.debug.core.IJavaValue;
 import org.eclipse.jdt.debug.core.IJavaVariable;
@@ -625,20 +627,48 @@ class MachineStateCanvas extends Canvas {
 			objectColor.dispose();
 		});
 	}
+	
+	Element canvas = new Element(null);
 
 	void paint(PaintEvent event) {
 		GC gc = event.gc;
 		IDebugTarget[] targets = DebugPlugin.getDefault().getLaunchManager().getDebugTargets();
+		int y = 0;
 		if (targets.length > 0) {
 			try {
 				IThread[] threads = targets[0].getThreads();
 				if (threads.length > 0) {
+					if (targets.length > 1) {
+						String message = "Multiple debug targets exist. Showing target " + targets[0].getName() + ".";
+						event.gc.drawString(message, 1, y + 1);
+						y += 1 + gc.stringExtent(message).y + 1;
+					}
+					List<IThread> userThreads = Arrays.stream(threads).filter(t -> {
+						try {
+							return !(t instanceof IJavaThread && ((IJavaThread)t).isSystemThread());
+						} catch (DebugException e) {
+							e.printStackTrace();
+							return false;
+						}
+					}).collect(Collectors.toList());
+					if (userThreads.size() > 1) {
+						String message = "Target has multiple threads. Showing thread " + userThreads.get(0).getName() + ". Ignoring threads ";
+						for (int i = 1; i < userThreads.size(); i++) {
+							if (1 < i)
+								message += ", ";
+							message += userThreads.get(i).getName();
+						}
+						message += ".";
+						event.gc.drawString(message, 1, y + 1);
+						y += 1 + gc.stringExtent(message).y + 1;
+					}
 					IStackFrame[] frames = threads[0].getStackFrames();
 					if (frames.length > 0) {
 						if (heap == null) {
-							machine = new Element(null);
+							machine = new Element(canvas);
 							heap = new Heap();
 						}
+						machine.y = y;
 						delayedInitializers = new ArrayList<>();
 						if (stack != null)
 							machine.remove(stack);
@@ -658,12 +688,14 @@ class MachineStateCanvas extends Canvas {
 			}
 			if (stack != null) {
 				arrows = new ArrayList<>();
-				machine.paint(gc);
+				canvas.paint(gc);
 				for (Arrow arrow : arrows)
 					arrow.paint(gc);
 				arrows = null;
 			}
 		} else {
+			if (machine != null)
+				canvas.remove(machine);
 			machine = null;
 			heap = null;
 			stack = null;
