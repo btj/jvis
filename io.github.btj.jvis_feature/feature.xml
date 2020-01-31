@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feature
+      id="io.github.btj.jvis_feature"
+      label="JVis"
+      version="1.0.0.qualifier">
+
+   <description url="https://github.com/btj/jvis">
+      Contributes the Machine State view, which provides a graphical view of the call stack and the heap during a debug session
+   </description>
+
+   <copyright url="http://www.example.com/copyright">
+      [Enter Copyright Description here.]
+   </copyright>
+
+   <license url="http://www.example.com/license">
+      [Enter License Description here.]
+   </license>
+
+   <url>
+      <update label="JVis Update Site" url="https://www.cs.kuleuven.be/~bartj/jvis"/>
+   </url>
+
+   <plugin
+         id="io.github.btj.jvis"
+         download-size="0"
+         install-size="0"
+         version="0.0.0"
+         unpack="false"/>
+
+</feature>
