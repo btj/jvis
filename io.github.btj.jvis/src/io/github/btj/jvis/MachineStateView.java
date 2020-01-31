@@ -40,12 +40,14 @@ import org.eclipse.swt.graphics.Point;
 import org.eclipse.swt.graphics.Transform;
 import org.eclipse.ui.part.ViewPart;
 
-enum MouseEventType { MOVED, DOUBLE_CLICKED }; 
+enum MouseEventType { MOVED, UP, DOUBLE_CLICKED }; 
 
 class Element {
 	Element parent;
 	ArrayList<Element> children = new ArrayList<>();
 	int x, y, width, height;
+	Element mouseChild;
+	boolean mouseInside;
 	
 	Element(Element parent) {
 		if (parent != null)
@@ -63,6 +65,8 @@ class Element {
 	
 	void remove(Element child) {
 		if (child.parent != this) throw new AssertionError();
+		if (mouseChild == child)
+			setMouseChild(null);
 		child.parent = null;
 		children.remove(child);
 	}
@@ -91,6 +95,29 @@ class Element {
 		return SWT.CURSOR_ARROW;
 	}
 	
+	void mouseEntered() {}
+	
+	private void mouseExitedInternal() {
+		if (mouseChild != null)
+			setMouseChild(null);
+		mouseInside = false;
+		mouseExited();
+	}
+	
+	void mouseExited() {}
+	
+	void setMouseChild(Element child) {
+		if (child != mouseChild) {
+			if (mouseChild != null)
+				mouseChild.mouseExitedInternal();
+			if (child != null) {
+				child.mouseInside = true;
+				child.mouseEntered();
+			}
+			mouseChild = child;
+		}
+	}
+	
 	boolean handleMouseEvent(MouseEventType type, MouseEvent e) {
 		//System.out.println("Entering handleMouseEvent(" + type + ", (" + e.x + ", " + e.y + "))");
 		for (Element child : children) {
@@ -98,6 +125,7 @@ class Element {
 				e.x -= child.x;
 				e.y -= child.y;
 				//System.out.println("Entering child at (" + child.x + ", " + child.y + "), extent (" + child.width + ", " + child.height + ")");
+				setMouseChild(child);
 				boolean result = child.handleMouseEvent(type, e);
 				//System.out.println("Leaving child");
 				e.x += child.x;
@@ -106,6 +134,7 @@ class Element {
 			} //else
 				//System.out.println("Skipping child at (" + child.x + ", " + child.y + "), extent (" + child.width + ", " + child.height + ")");
 		}
+		setMouseChild(null);
 		if (type == MouseEventType.MOVED) {
 			((Canvas)e.widget).setCursor(((Canvas)e.widget).getDisplay().getSystemCursor(getCursor(e.x, e.y)));
 			return true;
@@ -230,6 +259,7 @@ class MachineStateCanvas extends Canvas {
 		VariablesTable table;
 		String name;
 		Point nameExtent;
+		String valueString;
 		Object value;
 		Point valueExtent;
 	
@@ -243,7 +273,7 @@ class MachineStateCanvas extends Canvas {
 			if (javaValue.isNull())
 				return;
 			if (javaType.getName().equals("java.lang.String")) {
-				this.value = '"' + (String)this.value + '"' + " (id=" + ((IJavaObject)javaValue).getUniqueId() + ")";
+				this.value = this.valueString = '"' + (String)this.value + '"' + " (id=" + ((IJavaObject)javaValue).getUniqueId() + ")";
 				return;
 			}
 			delayedInitializers.add(() -> {
@@ -265,7 +295,7 @@ class MachineStateCanvas extends Canvas {
 			this.name = variable.getName();
 			this.nameExtent = gc.stringExtent(this.name);
 			IValue value = variable.getValue();
-			String valueString = value.getValueString();
+			this.valueString = value.getValueString();
 			this.value = valueString;
 			this.valueExtent = gc.stringExtent(valueString);
 			setValue(gc, value);
@@ -278,8 +308,7 @@ class MachineStateCanvas extends Canvas {
 			Color oldBackground = gc.getBackground();
 			gc.setBackground(gc.getDevice().getSystemColor(SWT.COLOR_WHITE));
 			gc.fillRectangle(this.table.namesWidth + 2, 0, this.table.valuesWidth - 2, this.height);
-			if (this.value instanceof String) {
-				String valueString = (String)this.value;
+			if (this.value instanceof String || ((JavaObject)this.value).parent == null) {
 				gc.drawString(valueString, this.table.namesWidth + INNER_PADDING, PADDING);
 			} else {
 				Point from = new Point(this.table.namesWidth + this.table.valuesWidth / 2, this.height / 2);
@@ -309,10 +338,17 @@ class MachineStateCanvas extends Canvas {
 		@Override boolean handleMouseEvent(MouseEventType type, MouseEvent e) {
 			switch (type) {
 			case DOUBLE_CLICKED: {
+				// TODO: Create child elements for the column edges?
 				if (Math.abs(e.x - table.namesWidth) < 5)
 					table.updateNamesWidth();
 				else if (Math.abs(e.x - table.namesWidth - table.valuesWidth) < 10)
 					table.updateValuesWidth();
+				else if (table.namesWidth <= e.x)
+					if (value instanceof JavaObject)
+						if (((JavaObject)value).parent == null) {
+							heap.add((JavaObject)value);
+							redraw();
+						}
 				return true;
 			}
 			default: break;
@@ -503,6 +539,8 @@ class MachineStateCanvas extends Canvas {
 		};
 		Variable[] variables;
 		
+		Element closeButton;
+		
 		int getWidth() {
 			return BORDER + PADDING + table.namesWidth + table.valuesWidth + PADDING + BORDER;
 		}
@@ -514,7 +552,37 @@ class MachineStateCanvas extends Canvas {
 	        this.id = id;
 	        this.width = getWidth();
 	        this.height = 50;
+	        
+	        closeButton = new Element(this) {
+	        	
+	        	@Override
+	        	void paint(GC gc) {
+	        		if (JavaObject.this.mouseInside) {
+		        		gc.drawLine(0, 0, this.width, this.height);
+		        		gc.drawLine(0, this.height, this.width, 0);
+	        		}
+	        	}
+	        	
+	        	@Override
+	        	boolean handleMouseEvent(MouseEventType type, MouseEvent e) {
+	        		if (type == MouseEventType.UP) {
+	        			JavaObject.this.parent.remove(JavaObject.this);
+	        			redraw();
+	        			return true;
+	        		}
+	        		return super.handleMouseEvent(type, e);
+	        	}
+	        };
+	        closeButton.width = 10;
+	        closeButton.height = 10;
+	        closeButton.y = BORDER + PADDING;
 		}
+    	
+    	@Override
+    	void mouseEntered() { redraw(); }
+    	
+    	@Override
+    	void mouseExited() { redraw(); }
 		
 		void setState(GC gc, IJavaObject javaObject) throws DebugException {
 			className = MachineStateCanvas.chopPackageName(javaObject.getReferenceTypeName());
@@ -537,7 +605,8 @@ class MachineStateCanvas extends Canvas {
 			}
 			y += BORDER;
 			this.height = y;
-			this.width = getWidth(); 
+			this.width = getWidth();
+			closeButton.x = this.width - BORDER - PADDING - closeButton.width;
 		}
 		
 		@Override
@@ -613,9 +682,8 @@ class MachineStateCanvas extends Canvas {
 
 			@Override
 			public void mouseUp(MouseEvent e) {
-//				if (stack != null)
-//					if (!stack.handleMouseEvent(e))
-//						heap.handleMouseEvent(e);
+				if (stack != null)
+					machine.handleMouseEvent(MouseEventType.UP, e);
 			}
 			
 		});
